@@ -1,17 +1,22 @@
 ---
-title: Retrofit 源码解析：Part 1
-date: 2018-04-26 00:31:46
+title: Retrofit 源码解析第一部分：请求流程解析
 tags:
-- Android
-- Retrofit
-- 源码解析
+  - Android
+  - Retrofit
+  - 源码解析
+date: 2018-05-02 17:30:00
 ---
 
-## 从一个小例子讲起
 
-我从 `Retrofit` 源码的 `samples` 模块中拿出 `SimpleService` 这个小例子稍作修改，以更基本的形式展示一下 `Retrofit` 请求的典型使用方式，然后顺着这个小例子一步一步对其源码做一下探究。
+## 研究对象：一个小例子
 
-先看一下整体的代码，因为是从 `SimpleService` 修改而来，所以我给其取名为 `SimplerService` 。
+我将 `Retrofit` 源码 `samples` 模块中的 `SimpleService` 这个小例子稍作修改，取名为 `SimplerService` ，以更基本的形式展示一下 `Retrofit` 的典型使用方式，然后以 `SimplerService` 为研究对象对 `Retrofit` 源码做一下探究。
+
+<!--more-->
+
+### 整体代码简单介绍
+
+`SimplerService` 整体代码如下 。
 
 ```java
 public final class SimplerService {
@@ -48,10 +53,13 @@ public final class SimplerService {
   }
 }
 ```
-<!--more-->
-上面的整体代码可以拆分为下面几步：
+上面的代码使用 `Retrofit` 请求了 [https://api.github.com/repos/square/retrofit/contributors](https://api.github.com/repos/square/retrofit/contributors) 这个接口，并将返回结果进行打印。
 
-### 1. 定义访问接口的 interface
+### 代码逻辑拆分
+
+`SimplerService` 的整体代码可以拆分为下面几步：
+
+#### 1. 定义用于发送 HTTP 请求的接口 `GitHub`
 
 ```java
 public interface GitHub {
@@ -64,7 +72,7 @@ public interface GitHub {
 
 通过该接口实例对象的方法调用将 HTTP 请求发送出去。
 
-### <a name="step2"/>2. 创建 Retrofit 对象
+#### <a name="step2"/>2. 创建 Retrofit 对象
 
 ```java
 Retrofit retrofit = new Retrofit.Builder()
@@ -74,21 +82,21 @@ Retrofit retrofit = new Retrofit.Builder()
 
 这个 `Retrofit` 对象很简单，只配置了 base url 。
 
-### <a name="step3"/>3. 创建 GitHub 接口的实例
+#### <a name="step3"/>3. 创建 GitHub 接口的实例
 
 ```java
 GitHub github = retrofit.create(GitHub.class);
 ```
 
-通过调用 `Retrofit#create()` 方法实现。
+通过调用 `Retrofit#create(Class)` 方法实现。
 
-### <a name="step4"/>4. 调用 GitHub 接口方法获取请求(`retrofit2.Call`)对象
+#### <a name="step4"/>4. 调用 GitHub 接口方法获取请求(`retrofit2.Call`)对象
 
 ```java
 Call<ResponseBody> call = github.contributors("square", "retrofit");
 ```
 
-### <a name="step5"/>5. 发送请求并获取响应对象
+#### <a name="step5"/>5. 发送请求并获取响应对象
 
 ```java
 Response<ResponseBody> response = call.execute();
@@ -96,7 +104,7 @@ Response<ResponseBody> response = call.execute();
 
 调用 `retrofit2.Call#execute()` 方法得到响应(`retrofit2.Response`)对象。
 
-### 6. 从响应对象中获取响应体(`okhttp3.ResponseBody`)对象
+#### 6. 从响应对象中获取响应体(`okhttp3.ResponseBody`)对象
 
 ```java
 ResponseBody body = response.body();
@@ -104,7 +112,7 @@ ResponseBody body = response.body();
 
 调用 `retrofit2.Response#body()` 方法。
 
-### 7. 通过`okhttp3.ResponseBody` 对象的相关方法获取具体数据
+#### 7. 通过 `okhttp3.ResponseBody` 对象的相关方法获取具体数据
 
 ```java
 // 获取字节流
@@ -119,23 +127,23 @@ byte[] bytes = body.bytes();
 String string = body.string();
 ```
 
-前三个是流的形式，后两个会把数据全部加载进内存。
+前三个是流的形式，后两个会把数据全部加载进内存。**注意，每次请求只能调用上面的一个方法。**
 
-## 请求到底是怎么发送出去的
+## 请求发送流程分析
 
-在上面的例子中，[第 5 步](#step5)的时候发送请求并得到响应对象。
+在 `SimplerService` 中，[第 5 步](#step5)的时候发送请求并得到响应对象。
 
 ```java
 Response<ResponseBody> response = call.execute();
 ```
 
-可以看出整个的逻辑应该发生在 `call.execute()` 方法中，而 `call` 是 `retrofit2.Call` 接口的实例，要想知道 `execute()` 方法中发生了什么，必须知道 `call` 对象对应具体的类是什么。而 `call` 对象又是在[第 4 步](#step4)中通过 `github` 对象的方法调用得到的，`github` 对象是 `GitHub` 接口的实例，它是在[第 3 步](#step3)通过 `retrofit` 对象创建的。
+可以看出请求发送的逻辑应该发生在 `call.execute()` 方法中，而 `call` 是 `retrofit2.Call` 接口的实例，要想知道 `execute()` 方法中发生了什么，必须知道 `call` 对象对应具体的类是什么。而 `call` 对象又是在[第 4 步](#step4)中通过 `github` 对象的方法调用得到的，`github` 对象是 `GitHub` 接口的实例，它是在[第 3 步](#step3)通过 `retrofit` 对象创建的。
 
-我们按照下面的顺序一步一步看一下请求是怎么发送出去的。
+按照上面的分析，一步一步看一下请求是怎么发送出去的。
 
-### 1. `GitHub` 实例是什么
+### <a name="github_instance">1. `GitHub` 实例是什么
 
-`Retrofit#create()` 方法源码如下：
+`Retrofit#create(Class)` 方法源码如下：
 
 ```java
   public <T> T create(final Class<T> service) {
@@ -165,15 +173,13 @@ Response<ResponseBody> response = call.execute();
   }
 ```
 
-可以看到 `create()` 方法返回了一个**动态代理**对象，在这里不对动态代理做深入探讨，我们只要知道被代理对象的所有方法调用最终会走到代理对象 `InvocationHandler` 的 `invoke` 方法中就够了。
+可以看到 `Retrofit.create(Class)` 方法返回了一个**动态代理**对象，在这里不对动态代理做深入探讨，我们只要知道**被代理对象（即 `GitHub` 接口）**的所有方法调用最终会走到代理对象 `InvocationHandler` 的 `invoke` 方法中就够了。
 
-所以，在这一步我们得到结论：`GitHub` 示例是一个动态代理对象。
+所以，在这一步我们得到结论：**`GitHub` 实例其实是一个动态代理对象**。
 
 ### 2. `retrofit2.Call` 实例是什么？
 
-我们已经知道 `call` 对象是 `github` 对象方法调用的返回值，而 `github` 是一个动态代理对象，它的方法调用
-
-会走到 `InvocationHandler#invoke()` 方法中，所以 **`call` 其实是 `invoke` 方法返回的**。
+我们已经知道 [`call` 对象是 `github.contributors("square", "retrofit")` 的返回值](#step4)，而 `github` 是一个动态代理对象，它的方法调用会走到 `InvocationHandler#invoke()` 方法中，所以 **`call` 其实是 `invoke` 方法返回的**。
 
 来看 `InvocationHandler#invoke()` 的源码：
 
@@ -194,31 +200,66 @@ new InvocationHandler() {
 }
 ```
 
-可以看到这里有两个对象创建一次方法调用，两个对象分别是 `ServiceMethod` 和 `OkHttpCall` ，一次方法调用是 `serviceMethod.adapt(okHttpCall)` 并且该方法的返回值就是 `invoke()` 方法的返回值。所以，**`call` 其实是 `serviceMethod.adapt(okHttpCall)` 返回的**。
+可以看到 `InvocationHandler#invoke()` 方法的返回值是 `serviceMethod.adapt(okHttpCall)` ，所以，**`call` 其实是 `serviceMethod.adapt(okHttpCall)` 返回的**。
+
+这里涉及到两个新的类，一个是 `ServiceMethod` ，一个是 `OkHttpCall`。
+
+#### `OkHttpCall` 是什么？
 
 先看一下 `OkHttpCall` 类的定义：
 
 ```java
-final class OkHttpCall<T> implements Call<T> {}
+final class OkHttpCall<T> implements Call<T> {
+  ...
+}
 ```
 
-它是 `retrofit2.Call` 接口的实现类，那 `call` 对象是 `OkHttpCall` 的实例吗？在这里我们还不知道，因为在 `InvocationHandler#invoke()` 中不是将 `OkHttpCall` 对象直接返回的。
+结论很简单，**它是 `retrofit2.Call` 接口的实现类。**
 
-继续看 `ServiceMethod` 这个类，这个类是干嘛的我们还不知道，但从注释中可以看出它的大致作用，如下：
+那 [`call` 对象](#step4)是 `OkHttpCall` 的实例吗？在这里我们还不知道，因为在 `InvocationHandler#invoke()` 中不是将 `OkHttpCall` 对象直接返回的。
+
+#### `ServiceMethod` 是什么？
+
+再看看 `ServiceMethod` 这个类，其注释如下：
 
 ```
 /** Adapts an invocation of an interface method into an HTTP call. */
 ```
-翻译过来就是**“将接口方法的执行转换为一个 HTTP 请求（对象）”**，小例子中的 `GitHub` 就是这里所说的*接口*。
+意思是**“将接口方法的执行转换为一个 HTTP 请求（对象）”**，`SimplerService` 中的 `GitHub` 就是这里所说的**接口**。
 
-<a name="servicemethod_adapt" />这个“转换”过程就发生在 `ServiceMethod#adapt()` 方法中，源码如下：
+<a name="retrofit_loadservicemethod" />这里的 `serviceMethod` 对象是通过 `Retrofit#loadServiceMethod(Method)` 获取的，其源码如下：
+
+```java
+ServiceMethod<?, ?> loadServiceMethod(Method method) {
+  ServiceMethod<?, ?> result = serviceMethodCache.get(method);
+  if (result != null) return result;
+
+  synchronized (serviceMethodCache) {
+    result = serviceMethodCache.get(method);
+    if (result == null) {
+      result = new ServiceMethod.Builder<>(this, method).build();
+      serviceMethodCache.put(method, result);
+    }
+  }
+  return result;
+}
+```
+
+可以看出 `serviceMethod` 是通过 `new ServiceMethod.Builder<>(this, method).build()` 创建的。
+
+#### “转换”过程解析
+
+这个**“转换”**过程就发生在 `ServiceMethod#adapt(OkHttpCall)` 方法中。
+
+##### <a name="servicemethod_adapt" />`serviceMethod.adapt(call)`
 
 ```java
 T adapt(Call<R> call) {
   return callAdapter.adapt(call);
 }
 ```
-看起来很简单，只有一行代码。虽然还不知道 `callAdapter` 是什么，但我们又可以得出一个结论：**小例子中的 `call` 对象是 `callAdapter.adapt(call)` 返回的**。
+
+看起来很简单，只有一行代码，调用了 `callAdapter.adapt(call)` 方法。所以，“转换”过程其实发生在 `CallAdapter#adapt(Call)` 中。
 
 `callAdapter` 是 `retrofit2.CallAdapter` 的实例对象，它的注释如下：
 
@@ -231,11 +272,13 @@ T adapt(Call<R> call) {
  */
 ```
 
-这个类的作用是将 `retrofit2.Call<R>` 转换成 `T` ,它的实例是由它的工厂类创建的，而其工厂类对象是通过 `Retrofit.Builder#addCallAdapterFactory(Factory)` “安装”到 `Retrofit` 对象中的。
+这个类的作用是将 `retrofit2.Call<R>` 转换成 `T` ，它的实例是由它的工厂类（`CallAdapter.Factory`）创建的（<a name="calladapter_creation">*通过 `CallAdapter.Factory#get(Type, Annotaion[], Retrofit)` 方法*</a>），而其工厂类对象是通过 `Retrofit.Builder#addCallAdapterFactory(Factory)` “安装”到 `Retrofit` 对象中的。
 
-但在我们的小例子中[创建 `Retrofit` 对象](#step2)的时候并没有调用 `addCallAdapterFactory(Factory)` “安装” `CallAdapter.Factory` 对象，那这里的 `callAdapter` 是哪里来的？分析一下。
+但在 `SimplerService` 中[创建 `Retrofit` 对象](#step2)的时候并没有调用 `Retrofit.Builder#addCallAdapterFactory(Factory)` 方法，那这里的 `callAdapter` 是什么？
 
-`callAdapter` 是 `ServcieMethod` 对象的成员变量，通过搜索可以看到 `callAdapter` 是在 `ServiceMethod` 的构造方法中被赋值的，它的值是 `builder.callAdapter` 。
+##### <a name="servicemethod_calladapter" />`serviceMethod` 的 `callAdapter` 是什么？
+
+`callAdapter` 是 `ServcieMethod` 对象的成员变量，它是在 `ServiceMethod` 的构造方法中被赋值的 。
 
 ```java
 ServiceMethod(Builder<R, T> builder) {
@@ -255,7 +298,7 @@ public ServiceMethod build() {
 }
 ```
 
-由此可以看出 `ServiceMethod.Builder` 对象的 `callAdapter` 是由其 `createCallAdapter()` 方法创建的，其源码如下：
+由此可以看出 `ServiceMethod` 对象的 `callAdapter` 变量是由 `ServiceMethod.Builder` 对象的 `callAdapter` 赋值的，而 `ServiceMethod.Builder` 对象的 `callAdapter` 是由其 `createCallAdapter()` 方法创建的，该方法源码如下：
 
 ```java
 private CallAdapter<T, R> createCallAdapter() {
@@ -270,7 +313,13 @@ private CallAdapter<T, R> createCallAdapter() {
   }
 }
 ```
-到这里可以看出 `callAdapter` 最终来自 `retrofit.callAdapter(returnType, annotations)` ，其源码如下：
+可以看到 `ServiceMethod#Builder` 的 `callAdapter` 通过 `retrofit.callAdapter(returnType, annotations)` 获得， `retrofit` 是 `Retrofit` 实例对象，是[通过 `ServiceMethod#Builder` 的构造参数传入](#retrofit_loadservicemethod)的。
+
+所以，**`serviceMethod` 的 `callAdapter` 是通过 `retrofit.callAdapter(returnType, annotations) 方法得到的。`**
+
+##### `retrofit.callAdapter(returnType, annotations)` 解析
+
+其源码如下：
 
 ```java
 public CallAdapter<?, ?> callAdapter(Type returnType, Annotation[] annotations) {
@@ -295,9 +344,11 @@ public CallAdapter<?, ?> nextCallAdapter(@Nullable CallAdapter.Factory skipPast,
   ...
 }
 ```
-上面代码的逻辑简单说就是对一个 `CallAdapter.Factory` 列表对象 `callAdapterFactories` 进行遍历并调用每个工厂对象的 `get()` 方法得到 `CallAdapter` 对象，将第一个不为 `null` 的 `CallAdapter` 对象返回。返回的这个 `CallAdapter` 对象就是 [`ServiceMethod.adapt(Call)`](#servicemethod_adapt) 方法中用到的 `callAdapter` 对象。那接下来就要分析 `callAdapterFactories` 是如何来的以及通过其中的那个工厂对象得到的 `CallAdapter` 对象不为 `null` 。
+`callAdapterFactories` 是 `Retrofit` 对象的成员变量，它是一个 `CallAdapter.Factory` 列表，上面的代码对这个列表进行遍历并[通过每个 `CallAdapter.Factory` 对象创建对应的 `CallAdapter` 对象](#calladapter_creation)，将第一个不为 `null` 的 `CallAdapter` 对象返回。
 
-通过在 `Retrofit` 源码中简单的搜索，可以知道 `callAdapterFactories` 是 `retrofit` 对象的成员变量，并且是在 `Retrofit` 的构造方法中被赋值的。
+##### `retrofit` 的 `callAdapterFactories` 包含什么？
+
+`callAdapterFactories` 是在 `Retrofit` 的构造方法中被赋值的。
 
 ```java
 Retrofit(okhttp3.Call.Factory callFactory, HttpUrl baseUrl,
@@ -326,9 +377,17 @@ public Retrofit build() {
 }
 ```
 
-在 `Retrofit.Builder#build()` 方法中，基于 `this.callAdapterFactories ` 新建了一个 `ArrayList` ，**并且**将通过 `platform.defaultCallAdapterFactory(callbackExecutor)` 得到的一个 `CallAdapter.Factory` 对象也加入其中，然后将这个新建的 `ArrayList` 传给了 `Retrofit` 的构造方法。
+在上面代码中，基于 **`Retrofit.Builder` 对象的 `callAdapterFactories`** 新建了一个 `ArrayList` 对象，然后将**通过 `platform.defaultCallAdapterFactory(callbackExecutor)` 得到的 `CallAdapter.Factory` 对象**也加入其中，这个新建的 `ArrayList` 对象被传给了 `Retrofit` 构造方法。
 
-`this.callAdapterFactories` 是 `Retrofit.Builder` 对象的成员变量，并且调用 `Retrofit.Builder#addCallAdapterFactory(CallAdapter.Factory)` 方法正是将作为参数的 `CallAdapter.Factory` 对象放入了 `this.callAdapterFactories` 中。
+###### `Retrofit.Builder` 对象的 `callAdapterFactories` 包含什么？
+
+`Retrofit.Builder` 对象的 `callAdapterFactories` 变量创建时是一个空列表。
+
+```java
+private final List<CallAdapter.Factory> callAdapterFactories = new ArrayList<>();
+```
+
+在调用 `Retrofit.Builder#addCallAdapterFactory(CallAdapter.Factory)` 方法时将作为参数传入的 `CallAdapter.Factory` 对象放入了 `callAdapterFactories` 中。
 
 ```java
 public Builder addCallAdapterFactory(CallAdapter.Factory factory) {
@@ -337,11 +396,11 @@ public Builder addCallAdapterFactory(CallAdapter.Factory factory) {
 }
 ```
 
-已经知道，小例子中 `Retrofit` 对象的创建并没有调用 `Retrofit.Builder#addCallAdapterFactory(CallAdapter.Factory)` 方法，因此可以合理地推断，`ServiceMethod#adapt(Call)` 方法中的 `adapter` 对象应该就是通过 `platform.defaultCallAdapterFactory(callbackExecutor)` 得到的工厂类创建的 `CallAdapter` 对象，现在要验证的就是对于我们的小例子来说 `platform.defaultCallAdapterFactory(callbackExecutor)` 得到的工厂类创建的 `CallAdapter` 对象是否为 `null` 。
+已经知道，`SimplerService` 中 [`Retrofit` 对象的创建](#step2)并没有调用 `Retrofit.Builder#addCallAdapterFactory(CallAdapter.Factory)` 方法，因此对于 `SimplerService` 来说 `Retrofit.Builder` 对象的 `callAdapterFactories` 是空的。
 
-接下来，我们必须搞清楚 `platform` 对象是什么，再去看它的 `defaultCallAdapterFactory()` 方法。
+###### `platform.defaultCallAdapterFactory(callbackExecutor)` 可以得到什么
 
-`platform` 是 `retrofit2.Platform` 类的实例，赋值来自于 `Retrofit.Builder` 的构造方法。
+`platform` 是 `retrofit2.Platform` 类的实例，在 `Retrofit.Builder` 的构造方法被赋值。
 
 ```java
 Builder(Platform platform) {
@@ -352,7 +411,7 @@ public Builder() {
   this(Platform.get());
 }
 ```
-在 `Platform` 的源码中可以看到：
+`SimplerService` 中 [`Retrofit` 对象的创建](#step2)调用的是 `Retrofit.Builder` 的无参构造方法，所以，`platform` 是通过 `Platform.get()` 得到的。
 
 ```java
 private static final Platform PLATFORM = findPlatform();
@@ -378,7 +437,7 @@ private static Platform findPlatform() {
 }
 ```
 
-由上可以知道对于 Android 开发来说 `platform` 是 `Android` 类的实例，`Android` 是 `Platform` 的子类。
+对于 Android 开发来说 `platform` 是 `Android` 类的实例。
 
 ```java
 static class Android extends Platform {
@@ -401,7 +460,15 @@ static class Android extends Platform {
 }
 ```
 
-看它的 `defaultCallAdapterFactory` 方法，返回了一个 `ExecutorCallAdapterFactory` 对象。
+看它的 `defaultCallAdapterFactory` 方法可以得知，**`platform.defaultCallAdapterFactory(callbackExecutor)` 得到的是 `ExecutorCallAdapterFactory` 实例对象**。
+
+###### 结论
+
+通过以上分析，可以知道，**`retrofit` 的 `callAdapterFactories` 只包含一个 `ExecutorCallAdapterFactory` 对象**。
+
+##### 通过 `ExecutorCallAdapterFactory` 创建的 `CallAdapter` 对象是否为 `null` ？
+
+<a name="executorcalladapterfactory" />`ExecutorCallAdapterFactory` 源码如下：
 
 ```java
 final class ExecutorCallAdapterFactory extends CallAdapter.Factory {
@@ -432,7 +499,7 @@ final class ExecutorCallAdapterFactory extends CallAdapter.Factory {
 }
 ```
 
-看 `get()` 方法的实现，首先是一个判断：
+看其 `get()` 方法的实现，返回值是否为 `null` 在于下面的判断条件：
 
 ```java
 if (getRawType(returnType) != Call.class) {
@@ -440,11 +507,19 @@ if (getRawType(returnType) != Call.class) {
 }
 ```
 
-如果 `returnType` 的 rawType 不是 `Call.class` 的话返回 `null` 。什么是 rawType ？不做过多的解释，举例说明，对于 `List<String>` 来说它的  rawType 就是 `List` 。那 `returnType` 是什么呢，它是我们定义的用于请求网络的接口方法的返回值类型，对于我们的小例子来说，就是 `GitHub#contributors()` 方法的返回值类型，是`Call<ResponseBody>` ，符合条件。（如果不理解的话，简单回溯一下 returnType 的传递流程）
+如果 `returnType` 的 rawType 不是 `Call.class` 的话就返回 `null` ，否则的话就返回一个 `CallAdapter` 的匿名内部类。
 
-继续看 `ExecutorCallAdapterFactory.get()` 方法的实现，后面就直接返回一个 `CallAdapter`  的匿名内部类了，所以 [`ServiceMethod.adapt()`](#servicemethod_adapt) 方法的返回值就是这个匿名内部类的 `adapt()` 方法的返回值，它是一个 `ExecutorCallbackCall` 类的实例。
+什么是 rawType ？举例说明，对于 `List<String>` 来说它的  rawType 是 `List` 。什么是 `returnType` ？`returnType` 是用于请求网络的接口方法的返回值类型。对于 `SimplerService` 来说，`GitHub#contributors()` 方法的返回值类型是 `Call<ResponseBody>` ，它的 rawType 是 `Call.class` ，符合条件。
 
-最终，我们得到了这一部分想要的答案：**`github.contributors("square", "retrofit")` 返回的 `retrofit2.Call`  实例是一个 `ExecutorCallbackCall` 对象**。
+所以，**对 `SimplerService` 来说， `ExecutorCallAdapterFactory` 创建的 `CallAdapter` 对象不为 `null`，并且是一个 `CallAdapter` 的匿名内部类**。
+
+##### `serviceMethod` 的 `callAdapter` 最终是什么？
+
+由以上的分析可以得出结论，**`serviceAdapter` 的 `callAdapter` 最终是通过 `ExecutorCallAdapterFactory` 工厂类得到的一个 `CallAdapter` 的匿名内部类**。
+
+##### 所以，`retrofit2.Call` 实例是什么？
+
+我们已经知道 `serviceMethod` 的 `callAdapter` 是通过 `ExecutorCallAdapterFactory` 创建的一个 `CallAdapter` 匿名内部类，那[“转换”过程](#servicemethod_adapt)其实是发生在这个匿名内部类的 `adapt()` 方法中，看其[源码](#executorcalladapterfactory)可以知道，**`retrofit2.Call` 实例是一个 `ExecutorCallbackCall` 对象**。
 
 ### 3. `call.execute()` 方法中发生了什么
 
@@ -456,7 +531,7 @@ if (getRawType(returnType) != Call.class) {
 }
 ```
 
-直接调用了 `delegate.execute()` 方法，这个 `delegate` 是它的构造方法传进来的一个 `retrofit2.Call` 对象。
+调用了 `delegate.execute()` 方法，这个 `delegate` 是它的构造方法传进来的一个 `retrofit2.Call` 对象。
 
 ```java
 ExecutorCallbackCall(Executor callbackExecutor, Call<T> delegate) {
@@ -472,7 +547,7 @@ ExecutorCallbackCall(Executor callbackExecutor, Call<T> delegate) {
 * `callAdapter.adapt(call)` 方法中将其作为  `ExecutorCallbackCall` 构造函数的第二个进行了传递；
 * `ExecutorCallbackCall` 构造函数的第二个参数正是赋值给了 `ExecutorCallbackCall` 对象的 `delegate` 变量。
 
-那接下来就要看 `OkHttpCall` 的 `execute()` 方法了。其源码如下：
+接下来看 `OkHttpCall` 的 `execute()` 方法，其源码如下：
 
 ```java
 @Override public Response<T> execute() throws IOException {
@@ -506,45 +581,4 @@ ExecutorCallbackCall(Executor callbackExecutor, Call<T> delegate) {
 3. 将第2步得到的 `okhttp3.Response` 对象传入 `parseResponse(okhttp3.Response)` 方法中得到一个 `retrofit2.Response` 对象并返回。
 
 所以说，**`Retrofit` 其实最终是通过 `OkHttp` 进行网络请求的**。
-
-上面的第2步属于 `OkHttp` 的范围了，这里不再说。简单看一下 `createRawCall` 方法和 `parseResponse(okhtt3.Response)` 的实现。
-
-```java
-private okhttp3.Call createRawCall() throws IOException {
-  okhttp3.Call call = serviceMethod.toCall(args);
-  if (call == null) {
-    throw new NullPointerException("Call.Factory returned null.");
-  }
-  return call;
-}
-```
-
-`okhttp3.Call` 对象其实是通过 `serviceMethod.toCall(args)` 方法得到的。
-
-```
-Response<T> parseResponse(okhttp3.Response rawResponse) throws IOException {
-  ResponseBody rawBody = rawResponse.body();
-
-  ...
-
-  ExceptionCatchingRequestBody catchingBody = new ExceptionCatchingRequestBody(rawBody);
-  try {
-    T body = serviceMethod.toResponse(catchingBody);
-    return Response.success(body, rawResponse);
-  } catch (RuntimeException e) {
-    // If the underlying source threw an exception, propagate that rather than indicating it was
-    // a runtime exception.
-    catchingBody.throwIfCaught();
-    throw e;
-  }
-}
-```
-
-这里我们看到通过 `serviceMethod.toResponse(catchingBody)` 得到的返回值传入 `retrofit2.Response.success()` 方法，得到一个 `retrofit2.Response` 对象并返回。
-
-在这篇文章中我们不对 `serviceMethod.toCall(args)` 和 `serviceMethod.toResponse(catchingBody)` 做深入解析，放到下次进行。
-
-至此，本次的解析到此结束。
-
-
 
